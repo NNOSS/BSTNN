@@ -1,5 +1,3 @@
-from __future__ import print_function
-
 #Author: Nick Steelman
 #Date: 5/29/18
 #gns126@gmail.com
@@ -22,7 +20,15 @@ import saveMovie
 class block:
     def __init__(self, name):
         self.name = name
-        self.children = []
+        self.children = [None]
+        self.threshold = None
+        self.convolutions = None
+        self.input_size = None
+        self.fully_connected_size = None
+        self.labels = None
+        self.next_input = None
+        self.learning_rate = None
+        self.beta1 = None
 
 def define_block_body(x_image, block_info, reuse = False):
     '''Create a classifier from the given inputs'''
@@ -69,8 +75,9 @@ def define_block(x_image, block_info, reuse_body = False, reuse = False):
 
 def new_block(parent, index, list_classes):
     m = block(parent.name + index)
-    m.classes = list_classes
+    m.classes = [0] + list_classes
     define_block(parent.next_input, m)
+    return m
 
 def generate_children(block_info):
     #TODO
@@ -78,11 +85,30 @@ def generate_children(block_info):
     matrix = get_confusion_matrix(block_info)
     #get the groups
     groups = return_groups(matrix, block_info.threshold)
+    #generate children blocks
+    for index, group in enumerate(groups):
+        block_info.chlidren.append(new_block(block_info, index + 1, group)))
 
-def get_confusion_matrix(block_info):
+def get_confusion_matrix(block_info, batch_size, num_batches):
     falsePercents = np.zeros((len(block_info.classes), len(block_info.classes)))
     totals = np.zeros((len(block_info.classes), len(block_info.classes)))
+    increment = np.ones(len(block_info.classes))
     #TODO
+    for i in range(num_batches):
+        #Run Code here to predict class labels
+        #data, labels = get_batch(batch_size)
+        #feed_dict = {blah blah blah}
+        #predicted = sess.run(predicted_labels ,feed_dict = feed_dict)
+        it = np.nditer(labels, flags=['f_index'],op_flags=['readwrite'])
+        while not it.finished:
+            falsePercents[it[0]] += predicted[it.index]
+            totals[it[0]] += increment
+            it.iternext()
+    return falsePercents/totals
+
+def train_block(block_info, input):
+
+
 
 if __name__ == "__main__":
     paths = {}
