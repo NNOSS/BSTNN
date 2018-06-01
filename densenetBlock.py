@@ -17,18 +17,21 @@ import matplotlib.pyplot as plt
 import importImg
 import saveMovie
 
+NUM_CLASSES = 200
+
 class block:
     def __init__(self, name):
         self.name = name
-        self.children = [None]
+        self.children = [None] #TRUE PREDICTIONS STARTING AT 1
         self.threshold = None
         self.convolutions = None
         self.input_size = None
         self.fully_connected_size = None
-        self.labels = None
+        self.labels = None #TRUE PREDICTIONS STARTING AT 0
         self.next_input = None
         self.learning_rate = None
         self.beta1 = None
+
 
 def define_block_body(x_image, block_info, reuse = False):
     '''Create a classifier from the given inputs'''
@@ -75,29 +78,29 @@ def define_block(x_image, block_info, reuse_body = False, reuse = False):
 
 def new_block(parent, index, list_classes):
     m = block(parent.name + index)
-    m.classes = [0] + list_classes
+    m.labels = list_classes
     define_block(parent.next_input, m)
+    update_dict(m)
     return m
 
 def generate_children(block_info):
-    #TODO
     #get the confusion matrix
-    matrix = get_confusion_matrix(block_info)
+    matrix = get_confusion_matrix(block_info)[1:][1:]
     #get the groups
     groups = return_groups(matrix, block_info.threshold)
     #generate children blocks
     for index, group in enumerate(groups):
-        block_info.chlidren.append(new_block(block_info, index + 1, group)))
+        group = block_info.labels[group]
+        block_info.chlidren.append(new_block(block_info, str(index + 1), group)))
 
 def get_confusion_matrix(block_info, batch_size, num_batches):
     falsePercents = np.zeros((len(block_info.classes), len(block_info.classes)))
     totals = np.zeros((len(block_info.classes), len(block_info.classes)))
     increment = np.ones(len(block_info.classes))
-    #TODO
     for i in range(num_batches):
         #Run Code here to predict class labels
         #data, labels = get_batch(batch_size)
-        #feed_dict = {blah blah blah}
+        #feed_dict = {blah blah blah} TODO
         #predicted = sess.run(predicted_labels ,feed_dict = feed_dict)
         it = np.nditer(labels, flags=['f_index'],op_flags=['readwrite'])
         while not it.finished:
@@ -106,11 +109,19 @@ def get_confusion_matrix(block_info, batch_size, num_batches):
             it.iternext()
     return falsePercents/totals
 
-def train_block(block_info, input):
+def update_dict(block_info):
+    for label in block_info.labels:
+        path.update(label, (m.name))
 
+def train_block(block_info, input):
+    #TODO
 
 
 if __name__ == "__main__":
-    paths = {}
+    #paths is a dictionary containing the binary search paths to each
+    #PATHS START AT 1
+    paths = {} #THERE SHOULD NOT BE A 0 IN ANY STRINGS
+    classes = np.arange(NUM_CLASSES)
+    m = new_block("X", None, classes)
     for i in range(NUM_CLASSES):
-        paths.update(i,"0")
+        paths.update(classes[i],("X" ,str(i+1)))
