@@ -22,6 +22,7 @@ class block:
         self.name = name
         self.labels = labels #TRUE PREDICTIONS STARTING AT 0
         #Should be Initialized before model initialization
+        self.block_labels = None
         self.learning_rate = None
         self.beta1 = None
         self.convolutions = None
@@ -32,7 +33,7 @@ class block:
         self.next_input = None
         self.train_step = None
         #initializated when creating new models
-        self.children = [None] #TRUE PREDICTIONS STARTING AT 1
+        self.children = [] #TRUE PREDICTIONS STARTING AT 1
 
 def define_block_body(x_image, block_info, reuse = False):
     '''Create a classifier from the given inputs'''
@@ -61,21 +62,26 @@ def define_block_body(x_image, block_info, reuse = False):
         return y_conv, conv_pointers[-1]
 
 def define_block(x_image, block_info, reuse_body = False, reuse = False):
+    '''Handle the final fully connected layer of the block as well as the necessary
+    variables to return'''
     m = block_info
     hidden, lastLayer = define_block_body(x_image, block_info, reuse_body)
     prefix = m.name + '_'
     with tf.variable_scope(prefix + "block") as scope:
         if reuse: #get previous variable if we are reusing the discriminator but with fake images
             scope.reuse_variables()
-        y_conv = DenseLayer(flat, m.fully_connected_size, name = prefix + 'output')
-        d_cross_entropy = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels = m.labels, logits = y_conv))# reduce mean for discriminator
-        d_cross_entropy_summary = tf.summary.scalar(prefix + 'loss', d_cross_entropy)
+        m.y_conv = DenseLayer(flat, m.fully_connected_size, name = prefix + 'output')
+        m.y = tf.placeholder(tf.float32, shape=[None, len(m.labels)], name= prefix +'class_inputs') #correct class
+
+        cross_entropy = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels = m.y, logits = m.y_conv))# reduce mean for discriminator
+        m.cross_entropy_summary = tf.summary.scalar(prefix + 'loss', cross_entropy)
+        accuracy = tf.reduce_mean(tf.cast(tf.equal(tf.argmax(m.y_conv,1), tf.argmax(m.y,1)), tf.float32))
+        m.accuracy_summary = tf.summary.scalar(prefix + 'accuracy', accuracy)
 
         m.next_input = MaxPool2d(lastLayer, filter_size = (2,2))
         _, l, w, d = tf.shape(m.next_input.output)
         m.output_shape = (l, w, d)
         t_vars = tf.trainable_variables()
-        prefix = m.name + '_'
         b_vars = [var for var in t_vars if prefix in var.name] #find trainable discriminator variable
         for var in b_vars:
             print(var.name)

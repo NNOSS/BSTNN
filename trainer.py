@@ -17,19 +17,26 @@ import matplotlib.pyplot as plt
 import importImg
 import saveMovie
 import denseBlock
-import hyperparameterProgression
+import setParameters
+import pickle
 
 NUM_CLASSES = 200
 
 def new_block(parent, index, list_classes):
-    m = block(parent.name + index)
-    m.labels = list_classes
-    if len(m.labels) > 1:
+    '''The block is the container for an individual network. This function creates
+    a new block that predicts from a list of given classes'''
+    m = block(parent.name + index, list_classes)
+    m.block_labels = np.zeros(NUM_CLASSES)#Labels specific to the indexing of this block
+    m.block_labels[block_info.labels] = np.arange(len(block_info.labels)) + 1
+    if len(m.labels) > 1:#If there is more than one class.
+        setParameters.set_parameters(m, parent)
         define_block(parent.next_input, m)
     update_dict(m)
     return m
 
 def generate_children(block_info):
+    '''This function takes a block and computes its accuracy, making groups that
+    have very little inter-group error'''
     #get the confusion matrix
     matrix = get_confusion_matrix(block_info)[1:][1:]
     #get the groups
@@ -38,11 +45,11 @@ def generate_children(block_info):
     for index, group in enumerate(groups):
         group = block_info.labels[group]
         block = new_block(block_info, str(index + 1), group)
-        block.input_shape = block_info.output_shape
         block_info.chlidren.append(block)
 
 
 def get_confusion_matrix(block_info, batch_size, num_batches):
+    '''Generates a confusion matrix from the data'''
     falsePercents = np.zeros((len(block_info.classes), len(block_info.classes)))
     totals = np.zeros((len(block_info.classes), len(block_info.classes)))
     increment = np.ones(len(block_info.classes))
@@ -59,13 +66,31 @@ def get_confusion_matrix(block_info, batch_size, num_batches):
     return falsePercents/totals
 
 def update_dict(block_info):
+    '''Update the global dictionary mapping labels to their path.'''
     for i, label in enumerate(block_info.labels):
         path.update(label, (m.name, str(i+1)))
 
-def train_block(block_info, input, labels):
-    pass
+def train_block(block_info, input_x, labels, input_placeholder):
+    '''Train an individual block. First we must reconfigure the labels to put them
+    in the appropriate indeces for the model, then we train it. Then repeat the
+    process with its children.'''
+    block_labels_curr = block_info.block_labels[labels]
+    #TODO
+    #Create Global Variables sess, train_writer, time_step
+    train_dict = {input_placeholder: input_x, block_info.y: block_labels_curr}
+    _, y_conv, cross_entropy_summary, accuracy_summary = sess.run([m.train_step, m.y_conv, m.cross_entropy_summary, m.accuracy_summary],
+    feed_dict=feed_dict)#train generator)
+    train_writer.add_summary(cross_entropy_summary, time_step)
+    train_writer.add_summary(accuracy_summary, time_step)
 
-def train_network(block_info, input, labels):
+    for child in block_info.children:
+        if len(child.labels) > 1:
+            next_input_x = np.where(np.isin(labels, child.labels) | np.isin(y_conv, child.labels),input_x)
+            next_labels = np.where(np.isin(labels, child.labels) | np.isin(y_conv, child.labels),labels)
+            train_block(child, next_input_x, next_labels, input_placeholder)
+
+
+def restore_models():
     pass
 
 
