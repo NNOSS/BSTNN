@@ -113,8 +113,8 @@ def update_dict(block_info):
     for label in block_info.labels:
         path.update(label, (m.name))
 
-def train_block(block_info, input):
-    #TODO
+def train_block(block_info, input, labels):
+
 
 
 if __name__ == "__main__":
@@ -122,6 +122,6 @@ if __name__ == "__main__":
     #PATHS START AT 1
     paths = {} #THERE SHOULD NOT BE A 0 IN ANY STRINGS
     classes = np.arange(NUM_CLASSES)
-    m = new_block("X", None, classes)
+    m = new_block("S", None, classes)
     for i in range(NUM_CLASSES):
-        paths.update(classes[i],("X" ,str(i+1)))
+        paths.update(classes[i],("S" ,str(i+1)))

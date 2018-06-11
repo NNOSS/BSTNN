@@ -4,7 +4,27 @@ import numpy as np
 #Date: 5/29/18
 #gns126@gmail.com
 #cleanestmink.com
+def symm_matrix(confusion_matrix):
+    '''An input confusion matrix is a directed graph, but if we want to easily find
+    clusters in the graph it is easier if it is undirected. So we sum the weights
+    in both directions between each vertex to get the undirected connection'''
+    for i in range(len(confusion_matrix)):
+        for j in range(i,len(confusion_matrix)):
+            tot = confusion_matrix[i][j] + confusion_matrix[j][i]
+            confusion_matrix[j][i],confusion_matrix[i][j] = tot, tot
 
+def find_thresholds(confusion_matrix, step = .01):
+    '''
+    Find the number of groups found at a variety of thresholds
+    '''
+    num_groups = {}
+    max_value = 2
+    for i in range(0, max_value, step):
+        groups = return_groups(confusion_matrix, i)
+        if len(groups) == len(confusion_matrix):
+            break
+        if len(groups) not in num_groups:
+            num_groups[len(groups)] = groups
 
 def return_groups(confusion_matrix, threshold):
     '''The purpose of this function is to take in a confusion matrix and return
