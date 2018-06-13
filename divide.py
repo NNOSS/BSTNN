@@ -11,20 +11,23 @@ def symm_matrix(confusion_matrix):
     for i in range(len(confusion_matrix)):
         for j in range(i,len(confusion_matrix)):
             tot = confusion_matrix[i][j] + confusion_matrix[j][i]
-            confusion_matrix[j][i],confusion_matrix[i][j] = tot, tot
+            confusion_matrix[j][i],confusion_matrix[i][j] = tot/2, tot/2
 
-def find_thresholds(confusion_matrix, step = .01):
+def find_thresholds(confusion_matrix, step = .001):
     '''
     Find the number of groups found at a variety of thresholds
     '''
     num_groups = {}
-    max_value = 2
-    for i in range(0, max_value, step):
+    max_value = 1
+    i = 0
+    while i < max_value:
         groups = return_groups(confusion_matrix, i)
         if len(groups) == len(confusion_matrix):
             break
         if len(groups) not in num_groups:
             num_groups[len(groups)] = groups
+        i += step
+    return num_groups
 
 def return_groups(confusion_matrix, threshold):
     '''The purpose of this function is to take in a confusion matrix and return
@@ -49,13 +52,14 @@ def search_neighbors(confusion_matrix, threshold, visited, index):
     num_classes = len(confusion_matrix[0])
     while len(queue):
         val = queue.pop(0)
-        visited.add(val)
-        current_group.append(val)
-        for j in range(num_classes):
-            # print(val)
-            # print(j)
-            if confusion_matrix[val][j] > threshold and j not in visited:
-                queue.append(j)
+        if val not in visited:
+            visited.add(val)
+            current_group.append(val)
+            for j in range(num_classes):
+                # print(val)
+                # print(j)
+                if confusion_matrix[val][j] > threshold and j not in visited:
+                    queue.append(j)
     return current_group
 
 

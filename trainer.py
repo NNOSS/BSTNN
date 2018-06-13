@@ -16,22 +16,24 @@ import densenetBlock
 import setParameters
 import cPickle
 import divide
+import getData
 
 NUM_CLASSES = 101
 ITERATIONS = 100000
-BATCH_SIZE = 50
+BATCH_SIZE = 25
 WHEN_SAVE = 200
 WHEN_TEST = 5
 
 DATA_PATH = '/home/gtower/Data/cifar-100-python/'
 TRAINING_NAME = 'train'
 TESTING_NAME = 'test'
+META_NAME = 'meta'
 INPUT_SHAPE = 32, 32, 3
 NUM_OUTPUTS = 5
 
 LEARNING_RATE = 1e-3
 BETA1 = .9
-CONVOLUTIONS = [64, 128, 256]
+CONVOLUTIONS = [32, 64, 128, 256]
 FULLY_CONNECTED_SIZE = 4096
 
 RESTORE = False
@@ -47,7 +49,7 @@ def new_block(parent, index, list_classes):
     m.block_labels[block_info.labels] = np.arange(len(block_info.labels)) + 1
     if len(m.labels) > 1:#If there is more than one class.
         setParameters.set_parameters(m, parent)
-        define_block(m)
+        densenetBlock.define_block(m)
     update_dict(m)
     return m
 
@@ -57,7 +59,7 @@ def generate_children(block_info):
     #get the confusion matrix
     matrix = get_confusion_matrix(block_info)[1:][1:]
     #get the groups
-    groups = return_groups(matrix, block_info.threshold)
+    groups = divide.return_groups(matrix, block_info.threshold)
     #generate children blocks
     for index, group in enumerate(groups):
         group = block_info.labels[group]
@@ -67,32 +69,38 @@ def generate_children(block_info):
 def get_confusion_matrix(block_info, batch_size):
     '''Generates a confusion matrix from the data'''
     m = block_info
-    falsePercents = np.zeros((len(m.classes), len(m.classes)))
-    totals = np.zeros((len(m.classes), len(m.classes)))
-    increment = np.ones(len(m.classes))
-    test_gen = get_batch_generator(batch_size, DATA_PATH+TESTING_NAME)
+    falsePercents = np.zeros((len(m.labels), len(m.labels)))
+    classifications = np.zeros((len(m.labels), len(m.labels)))
+    totals = np.zeros((len(m.labels), len(m.labels)))
+    increment = np.ones(len(m.labels))
+    test_gen = getData.get_batch_generator(batch_size, DATA_PATH+TESTING_NAME)
     x_batch_test, y_labels_test = next(test_gen,(None, None))
     while x_batch_test is not None:#when the generator is done, instantiate a new one
-        input_x_test = np.reshape(x_batch_test, [len(y_labels), INPUT_SHAPE[2], INPUT_SHAPE[0], INPUT_SHAPE[1]])
+        input_x_test = np.reshape(x_batch_test, [len(y_labels_test), INPUT_SHAPE[2], INPUT_SHAPE[0], INPUT_SHAPE[1]])
         input_x_test = np.transpose(input_x_test, (0, 2, 3, 1))
-        block_labels_curr = m.block_labels[labels]
+        block_labels_curr = m.block_labels[y_labels_test]
         indexes = np.arange(len(block_labels_curr))
         one_hot_labels = np.zeros((len(block_labels_curr),len(block_info.labels)))
         one_hot_labels[indexes, block_labels_curr] = 1
-        feed_dict = {m.input: input_x, m.y: one_hot_labels}
+        feed_dict = {m.input: input_x_test, m.y: one_hot_labels}
         y_conv = sess.run([m.y_conv], feed_dict=feed_dict)#train generator)
+        y_conv = np.squeeze(y_conv)
         y_exp = np.exp(y_conv)
         y_tot = np.sum(y_exp, axis = 1)
-        y_conv = y_exp / y_tot[:, np.newaxis]
+        y_conv_softmax = y_exp / y_tot[:, np.newaxis]
         it = np.nditer(block_labels_curr, flags=['f_index'],op_flags=['readwrite'])
+        predicted_labels = np.argmax(y_exp, axis = 1)
+        # print(y_conv)
+        # print(np.sum(y_conv, axis = 1))
         while not it.finished:
-            falsePercents[it[0]] += y_conv[it.index]
             totals[it[0]] += increment
+            falsePercents[it[0]] += y_conv_softmax[it.index]
+            classifications[it[0], predicted_labels[it.index] ] += 1
             it.iternext()
         x_batch_test, y_labels_test = next(test_gen,(None, None))
     matrix = falsePercents/totals
     divide.symm_matrix(matrix)
-    return matrix
+    return matrix, classifications
 
 def update_dict(block_info):
     '''Update the global dictionary mapping labels to their path.'''
@@ -115,8 +123,8 @@ def train_model(head_block ,num_iterations):
     global time_step
     time_step = 0
     batch_size = BATCH_SIZE
-    train_gen = get_batch_generator(batch_size, DATA_PATH+TRAINING_NAME)
-    test_gen = get_batch_generator(batch_size, DATA_PATH+TESTING_NAME)
+    train_gen = getData.get_batch_generator(batch_size, DATA_PATH+TRAINING_NAME)
+    test_gen = getData.get_batch_generator(batch_size, DATA_PATH+TESTING_NAME)
     epoch = 0
     input_images_summary = tf.summary.image("image_inputs", head_block.input ,max_outputs = NUM_OUTPUTS)
 
@@ -127,7 +135,7 @@ def train_model(head_block ,num_iterations):
         x_batch, y_labels = next(train_gen,(None, None))
 
         while x_batch is None:#when the generator is done, instantiate a new one
-            train_gen = get_batch_generator(batch_size, DATA_PATH+TRAINING_NAME)
+            train_gen = getData.get_batch_generator(batch_size, DATA_PATH+TRAINING_NAME)
             epoch += 1
             print("Completed Epoch. Num Completed: ",epoch)
             x_batch, y_labels = next(train_gen,(None, None))
@@ -138,7 +146,7 @@ def train_model(head_block ,num_iterations):
         if iteration % WHEN_TEST == 0:
             x_batch_test, y_labels_test = next(test_gen,(None, None))
             while x_batch_test is None:#when the generator is done, instantiate a new one
-                test_gen = get_batch_generator(batch_size, DATA_PATH+TESTING_NAME)
+                test_gen = getData.get_batch_generator(batch_size, DATA_PATH+TESTING_NAME)
                 x_batch_test, y_labels_test = next(test_gen,(None, None))
             input_x_test = np.reshape(x_batch_test, [len(y_labels), INPUT_SHAPE[2], INPUT_SHAPE[0], INPUT_SHAPE[1]])
             input_x_test = np.transpose(input_x_test, (0, 2, 3, 1))
@@ -193,25 +201,15 @@ def test_block(block_info, input_x, labels):
             next_labels = np.where(np.isin(labels, child.labels) | np.isin(y_conv, child.labels),labels)
             test_block(child, next_input_x, next_labels)
 
-def get_batch_generator(batch_size, file_name):
-    data_dict = unpickle(file_name)
-    data = data_dict['data']
-    labels = data_dict['fine_labels']
-    for i in range(0,len(labels),batch_size):
-        j = min(i+batch_size,len(labels))
-        yield data[i:j], labels[i:j]
-
-def unpickle(file_name):
-    with open(file_name, 'rb') as fo:
-        data_dict = cPickle.load(fo)
-    return data_dict
-
 def restore_models():
     pass
 
 if __name__ == "__main__":
     #paths is a dictionary containing the binary search paths to each
     #PATHS START AT 1
+    class_names = getData.get_class_names(DATA_PATH + META_NAME)
+    class_names = np.array(class_names)
+
     path = {} #THERE SHOULD NOT BE A 0 IN ANY STRINGS
     sess = tf.Session()#start the session
     classes = np.arange(NUM_CLASSES)
@@ -226,5 +224,34 @@ if __name__ == "__main__":
         print('SAVE')
         saver.save(sess, MODEL_FILEPATH)
 
-
     train_model(head_block , ITERATIONS)
+    # matrix, classifications = get_confusion_matrix(head_block, 100)
+    # matrix = matrix[1:,1:]
+    # classifications = classifications[1:,1:]
+    # y_tot = np.sum(classifications, axis = 1)
+    # classifications_norm = classifications / y_tot[:, np.newaxis]
+    # divide.symm_matrix(classifications_norm)
+    # groups_dict = divide.find_thresholds(classifications_norm)
+    # # print(groups_dict)
+    # least_groups = len(head_block.labels) + 2
+    # for key in groups_dict.keys():
+    #     max_group = 0
+    #     for group in groups_dict[key]:
+    #         if max_group < len(group):
+    #             max_group = len(group)
+    #     if max_group < (len(head_block.labels)/2)  and key < least_groups:
+    #         least_groups = key
+    # # print(groups_dict[least_groups])
+    # # print(least_groups)
+    # print(classifications_norm[:6,:6])
+    # wrong = 0
+    # tot = 0
+    # #This is horribly inefficient
+    # for group in groups_dict[least_groups]:
+    #     print(class_names[group])
+    #     for class_label in group:
+    #         for i in range(NUM_CLASSES-1):
+    #             tot += classifications[class_label, i]
+    #             if i not in group:
+    #                 wrong += classifications[class_label, i]
+    # print(wrong/tot)
