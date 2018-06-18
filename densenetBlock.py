@@ -67,9 +67,9 @@ def define_block_leaf(block_info):
         block_labels = tf.constant(m.block_labels, name = prefix +'block_labels')
         m.filtered_labels = tf.where(block_labels[m.predictions] != 0 or block_labels[m.y] != 0,
         x = m.y, name = prefix + 'filtered_labels')
-        filtered_labels_false = block_labels[m.y]
-        one_hot_false = tf.zeros([filtered_labels.get_shape()[0], len(m.labels)+1], name=prefix +'One_Hot')
-        one_hot_false[filtered_labels_false] = 1
+        m.filtered_labels_false = block_labels[m.y]
+        one_hot_false = tf.zeros([m.filtered_labels.get_shape()[0], len(m.labels)+1], name=prefix +'One_Hot')
+        one_hot_false[m.filtered_labels_false] = 1
         m.filtered_input = tf.where(block_labels[m.predictions] != 0 or block_labels[m.y] != 0,
         x = m.x, name = prefix + 'filtered_input')
 

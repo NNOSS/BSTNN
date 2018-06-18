@@ -41,7 +41,7 @@ RESTORE = False
 MODEL_FILEPATH = '/home/gtower/Models/MNIST/model.ckpt' #filepaths to model and summaries
 SUMMARY_FILEPATH = '/home/gtower/Models/MNIST/Summaries/'
 
-def new_leaf_block(parent, index, list_classes, x, y, predictions):
+def new_leaf_block(parent, index, list_classes):
     '''The block is the container for an individual network. This function creates
     a new block that predicts from a list of given classes'''
     m = densenetBlock.block(parent.name + index, list_classes, parent.filtered_input,
@@ -55,15 +55,17 @@ def new_leaf_block(parent, index, list_classes, x, y, predictions):
     return m
 
 def define_head(list_classes):
-    INPUT_SHAPE
-    head_block = densenetBlock.block('S', list_classes, INPUT_SHAPE)
+    x = tf.placeholder(tf.float32, shape=(None, INPUT_SHAPE[0], INPUT_SHAPE[1], INPUT_SHAPE[2]))
+    y = tf.placeholder(tf.float32, shape=(None, 1))
+    fake_prediction = tf.zeros_like(y)
+    head_block = densenetBlock.block('S', list_classes, x, y, fake_prediction)
     head_block.block_labels = np.zeros(NUM_CLASSES, dtype=np.int16)#Labels specific to the indexing of this block
     head_block.block_labels[head_block.labels] = np.arange(len(head_block.labels)) + 1
     head_block.learning_rate = LEARNING_RATE
     head_block.beta1 = BETA1
     head_block.convolutions = CONVOLUTIONS
     head_block.fully_connected_size = FULLY_CONNECTED_SIZE
-    densenetBlock.define_block(head_block)
+    densenetBlock.define_block_leaf(head_block)
     update_dict(head_block)
     return head_block
 
@@ -79,17 +81,14 @@ def get_confusion_matrix(block_info, batch_size):
 
     x_batch_test, y_labels_test = next(test_gen,(None, None))
     while x_batch_test is not None:#when the generator is done, instantiate a new one
-        block_labels_curr = m.block_labels[y_labels_test]
-        indexes = np.arange(len(block_labels_curr))
-        one_hot_labels = np.zeros((len(block_labels_curr),len(block_info.labels)))
-        one_hot_labels[indexes, block_labels_curr] = 1
-        feed_dict = {m.input: x_batch_test, m.y: one_hot_labels}
-        y_conv = sess.run([m.y_conv], feed_dict=feed_dict)#train generator)
+
+        feed_dict = {x: x_batch_test, y: y_labels_test}
+        y_conv, filtered_labels_false = sess.run([m.y_conv, m.filtered_labels_false], feed_dict=feed_dict)#train generator)
         y_conv = np.squeeze(y_conv)
         y_exp = np.exp(y_conv)
         y_tot = np.sum(y_exp, axis = 1)
         y_conv_softmax = y_exp / y_tot[:, np.newaxis]
-        it = np.nditer(block_labels_curr, flags=['f_index'],op_flags=['readwrite'])
+        it = np.nditer(filtered_labels_false, flags=['f_index'],op_flags=['readwrite'])
         predicted_labels = np.argmax(y_exp, axis = 1)
         # print(y_conv)
         # print(np.sum(y_conv, axis = 1))
@@ -120,8 +119,6 @@ def update_dict(block_info):
     '''Update the global dictionary mapping labels to their path.'''
     for i, label in enumerate(block_info.labels):
         path[label] = (block_info.name, str(i+1))
-
-
 
 def train_model(head_block ,num_iterations):
     global time_step
