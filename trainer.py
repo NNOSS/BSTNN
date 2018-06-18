@@ -20,7 +20,7 @@ import getData
 
 NUM_CLASSES = 101
 ITERATIONS = 100000
-BATCH_SIZE = 25
+BATCH_SIZE = 100
 WHEN_SAVE = 200
 WHEN_TEST = 5
 
@@ -28,18 +28,18 @@ DATA_PATH = '/home/gtower/Data/cifar-100-python/'
 TRAINING_NAME = 'train'
 TESTING_NAME = 'test'
 META_NAME = 'meta'
-INPUT_SHAPE = 32, 32, 3
+INPUT_SHAPE = 28, 28, 1
 NUM_OUTPUTS = 5
 
 LEARNING_RATE = 1e-3
 BETA1 = .9
-CONVOLUTIONS = [32, 64, 128, 256]
+CONVOLUTIONS = [32, 64, 128]
 FULLY_CONNECTED_SIZE = 4096
 
 RESTORE = False
 
-MODEL_FILEPATH = '/home/gtower/Models/CIFAR100/model.ckpt' #filepaths to model and summaries
-SUMMARY_FILEPATH = '/home/gtower/Models/CIFAR100/Summaries/'
+MODEL_FILEPATH = '/home/gtower/Models/MNIST/model.ckpt' #filepaths to model and summaries
+SUMMARY_FILEPATH = '/home/gtower/Models/MNIST/Summaries/'
 
 def new_block(parent, index, list_classes):
     '''The block is the container for an individual network. This function creates
@@ -73,16 +73,16 @@ def get_confusion_matrix(block_info, batch_size):
     classifications = np.zeros((len(m.labels), len(m.labels)))
     totals = np.zeros((len(m.labels), len(m.labels)))
     increment = np.ones(len(m.labels))
-    test_gen = getData.get_batch_generator(batch_size, DATA_PATH+TESTING_NAME)
+    # test_gen = getData.get_batch_generator(batch_size, DATA_PATH+TESTING_NAME)
+    test_gen = getData.return_mnist_test_generator(batch_size)
+
     x_batch_test, y_labels_test = next(test_gen,(None, None))
     while x_batch_test is not None:#when the generator is done, instantiate a new one
-        input_x_test = np.reshape(x_batch_test, [len(y_labels_test), INPUT_SHAPE[2], INPUT_SHAPE[0], INPUT_SHAPE[1]])
-        input_x_test = np.transpose(input_x_test, (0, 2, 3, 1))
         block_labels_curr = m.block_labels[y_labels_test]
         indexes = np.arange(len(block_labels_curr))
         one_hot_labels = np.zeros((len(block_labels_curr),len(block_info.labels)))
         one_hot_labels[indexes, block_labels_curr] = 1
-        feed_dict = {m.input: input_x_test, m.y: one_hot_labels}
+        feed_dict = {m.input: x_batch_test, m.y: one_hot_labels}
         y_conv = sess.run([m.y_conv], feed_dict=feed_dict)#train generator)
         y_conv = np.squeeze(y_conv)
         y_exp = np.exp(y_conv)
@@ -123,8 +123,10 @@ def train_model(head_block ,num_iterations):
     global time_step
     time_step = 0
     batch_size = BATCH_SIZE
-    train_gen = getData.get_batch_generator(batch_size, DATA_PATH+TRAINING_NAME)
-    test_gen = getData.get_batch_generator(batch_size, DATA_PATH+TESTING_NAME)
+    # train_gen = getData.get_batch_generator(batch_size, DATA_PATH+TRAINING_NAME)
+    # test_gen = getData.get_batch_generator(batch_size, DATA_PATH+TESTING_NAME)
+    train_gen = getData.return_mnist_train_generator(batch_size)
+    test_gen = getData.return_mnist_test_generator(batch_size)
     epoch = 0
     input_images_summary = tf.summary.image("image_inputs", head_block.input ,max_outputs = NUM_OUTPUTS)
 
@@ -135,22 +137,21 @@ def train_model(head_block ,num_iterations):
         x_batch, y_labels = next(train_gen,(None, None))
 
         while x_batch is None:#when the generator is done, instantiate a new one
-            train_gen = getData.get_batch_generator(batch_size, DATA_PATH+TRAINING_NAME)
+            # train_gen = getData.get_batch_generator(batch_size, DATA_PATH+TRAINING_NAME)
+            train_gen = getData.return_mnist_train_generator(batch_size)
             epoch += 1
             print("Completed Epoch. Num Completed: ",epoch)
             x_batch, y_labels = next(train_gen,(None, None))
-        input_x = np.reshape(x_batch, [len(y_labels), INPUT_SHAPE[2], INPUT_SHAPE[0], INPUT_SHAPE[1]])
-        input_x = np.transpose(input_x, (0, 2, 3, 1))
-        train_block(head_block, input_x, y_labels)
+
+        train_block(head_block, x_batch, y_labels)
 
         if iteration % WHEN_TEST == 0:
             x_batch_test, y_labels_test = next(test_gen,(None, None))
             while x_batch_test is None:#when the generator is done, instantiate a new one
-                test_gen = getData.get_batch_generator(batch_size, DATA_PATH+TESTING_NAME)
+                # test_gen = getData.get_batch_generator(batch_size, DATA_PATH+TESTING_NAME)
+                test_gen = getData.return_mnist_test_generator(batch_size)
                 x_batch_test, y_labels_test = next(test_gen,(None, None))
-            input_x_test = np.reshape(x_batch_test, [len(y_labels), INPUT_SHAPE[2], INPUT_SHAPE[0], INPUT_SHAPE[1]])
-            input_x_test = np.transpose(input_x_test, (0, 2, 3, 1))
-            test_block(head_block, input_x_test, y_labels_test)
+            test_block(head_block, x_batch_test, y_labels_test)
 
         if iteration % WHEN_SAVE ==0:
             saver.save(sess, MODEL_FILEPATH)
