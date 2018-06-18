@@ -41,10 +41,11 @@ RESTORE = False
 MODEL_FILEPATH = '/home/gtower/Models/MNIST/model.ckpt' #filepaths to model and summaries
 SUMMARY_FILEPATH = '/home/gtower/Models/MNIST/Summaries/'
 
-def new_block(parent, index, list_classes):
+def new_leaf_block(parent, index, list_classes, x, y, predictions):
     '''The block is the container for an individual network. This function creates
     a new block that predicts from a list of given classes'''
-    m = densenetBlock.block(parent.name + index, list_classes)
+    m = densenetBlock.block(parent.name + index, list_classes, parent.filtered_input,
+     parent.filtered_labels, parent.y_conv)
     m.block_labels = np.zeros(NUM_CLASSES, dtype=np.int16)#Labels specific to the indexing of this block
     m.block_labels[block_info.labels] = np.arange(len(block_info.labels)) + 1
     if len(m.labels) > 1:#If there is more than one class.
@@ -53,18 +54,18 @@ def new_block(parent, index, list_classes):
     update_dict(m)
     return m
 
-def generate_children(block_info):
-    '''This function takes a block and computes its accuracy, making groups that
-    have very little inter-group error'''
-    #get the confusion matrix
-    matrix = get_confusion_matrix(block_info)[1:][1:]
-    #get the groups
-    groups = divide.return_groups(matrix, block_info.threshold)
-    #generate children blocks
-    for index, group in enumerate(groups):
-        group = block_info.labels[group]
-        block = new_block(block_info, str(index + 1), group)
-        block_info.chlidren.append(block)
+def define_head(list_classes):
+    INPUT_SHAPE
+    head_block = densenetBlock.block('S', list_classes, INPUT_SHAPE)
+    head_block.block_labels = np.zeros(NUM_CLASSES, dtype=np.int16)#Labels specific to the indexing of this block
+    head_block.block_labels[head_block.labels] = np.arange(len(head_block.labels)) + 1
+    head_block.learning_rate = LEARNING_RATE
+    head_block.beta1 = BETA1
+    head_block.convolutions = CONVOLUTIONS
+    head_block.fully_connected_size = FULLY_CONNECTED_SIZE
+    densenetBlock.define_block(head_block)
+    update_dict(head_block)
+    return head_block
 
 def get_confusion_matrix(block_info, batch_size):
     '''Generates a confusion matrix from the data'''
@@ -102,22 +103,25 @@ def get_confusion_matrix(block_info, batch_size):
     divide.symm_matrix(matrix)
     return matrix, classifications
 
+def generate_children(block_info):
+    '''This function takes a block and computes its accuracy, making groups that
+    have very little inter-group error'''
+    #get the confusion matrix
+    matrix = get_confusion_matrix(block_info)[1:][1:]
+    #get the groups
+    groups = divide.return_groups(matrix, block_info.threshold)
+    #generate children blocks
+    for index, group in enumerate(groups):
+        group = block_info.labels[group]
+        block = new_block(block_info, str(index + 1), group)
+        block_info.chlidren.append(block)
+
 def update_dict(block_info):
     '''Update the global dictionary mapping labels to their path.'''
     for i, label in enumerate(block_info.labels):
         path[label] = (block_info.name, str(i+1))
 
-def define_head(list_classes):
-    head_block = densenetBlock.block('S', list_classes, INPUT_SHAPE)
-    head_block.block_labels = np.zeros(NUM_CLASSES, dtype=np.int16)#Labels specific to the indexing of this block
-    head_block.block_labels[head_block.labels] = np.arange(len(head_block.labels)) + 1
-    head_block.learning_rate = LEARNING_RATE
-    head_block.beta1 = BETA1
-    head_block.convolutions = CONVOLUTIONS
-    head_block.fully_connected_size = FULLY_CONNECTED_SIZE
-    densenetBlock.define_block(head_block)
-    update_dict(head_block)
-    return head_block
+
 
 def train_model(head_block ,num_iterations):
     global time_step

@@ -3,7 +3,7 @@ import cPickle
 import numpy as np
 
 def return_mnist_train_generator(batch_size):
-    mnist = input_data.read_data_sets('/home/gtower/Data/MNIST_data', one_hot=False)
+    mnist = tf.contrib.learn.datasets.load_dataset('/home/gtower/Data/MNIST_data')
 
     for i in range(1000000):
         batch = mnist.train.next_batch(batch_size)
@@ -11,7 +11,7 @@ def return_mnist_train_generator(batch_size):
         yield batch[0], batch[1]
 
 def return_mnist_test_generator(batch_size):
-    mnist = input_data.read_data_sets('/home/gtower/Data/MNIST_data', one_hot=False)
+    mnist = input_data.read_data_sets('/home/gtower/Data/MNIST_data', one_hot=True)
     for i in range(0, len(mnist.test.labels), batch_size):
         batch = np.reshape(mnist.test.images[i:i+batch_size], [batch_size,INPUT_SHAPE[0], INPUT_SHAPE[1], INPUT_SHAPE[2]])
         yield batch, mnist.test.labels[i:i+batch_size]
