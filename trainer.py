@@ -7,6 +7,7 @@
 # from tensorflow.examples.tutorials.mnist import input_data
 # mnist = input_data.read_data_sets("/tmp/data/", one_hot=True)
 import os
+import sys
 # os.environ["CUDA_VISIBLE_DEVICES"]="-1"
 import tensorflow as tf
 import tensorlayer as tl
@@ -21,8 +22,8 @@ import getData
 NUM_CLASSES = 10
 ITERATIONS = 100000
 BATCH_SIZE = 100
-WHEN_SAVE = 200
-WHEN_TEST = 5
+WHEN_SAVE = 3000
+WHEN_TEST = 10
 
 DATA_PATH = '/home/gtower/Data/cifar-100-python/'
 TRAINING_NAME = 'train'
@@ -33,7 +34,7 @@ NUM_OUTPUTS = 5
 
 LEARNING_RATE = 1e-3
 BETA1 = .9
-CONVOLUTIONS = [32, 64, 128]
+CONVOLUTIONS = [32, 64]
 FULLY_CONNECTED_SIZE = 4096
 
 RESTORE = False
@@ -41,7 +42,8 @@ RESTORE = False
 trainers = []
 perm_variables = []
 temp_variables = []
-statistics = []
+train_stats = []
+test_stats = []
 
 PERM_MODEL_FILEPATH = '/home/gtower/Models/MNIST/perm_model.ckpt' #filepaths to model and summaries
 TEMP_MODEL_FILEPATH = '/home/gtower/Models/MNIST/temp_model.ckpt' #filepaths to model and summaries
@@ -77,10 +79,17 @@ def new_branch_block(parent, index, list_classes, children_groups):
     update_dict(m)
     return m
 
-def define_head(list_classes, x, y, children_groups = None):
-    fake_prediction = tf.zeros_like(y)
+def define_head(list_classes, next_train, next_test ,children_groups = None):
+    global trainers
+    global perm_variables
+    global temp_variables
+    global train_stats
+    global test_stats
+    test_bool = tf.placeholder_with_default(tf.constant(False), ())
+    input_x, input_y =  tf.cond(test_bool, lambda: next_test, lambda: next_train, name = 'which_input')
+    fake_prediction = tf.zeros_like(input_y)
     if children_groups is None:
-        head_block = densenetBlock.block('S', list_classes, x, y, fake_prediction)
+        head_block = densenetBlock.block('S', list_classes, input_x, input_y, fake_prediction)
         head_block.block_labels = np.zeros(NUM_CLASSES+1, dtype=np.int16)#Labels specific to the indexing of this block
         head_block.block_labels[head_block.labels] = np.arange(len(head_block.labels)) + 1
         head_block.learning_rate = LEARNING_RATE
@@ -89,7 +98,7 @@ def define_head(list_classes, x, y, children_groups = None):
         head_block.fully_connected_size = FULLY_CONNECTED_SIZE
         densenetBlock.define_block_leaf(head_block)
     else:
-        head_block = densenetBlock.block('S', list_classes, x, y, fake_prediction, children_groups = children_groups)
+        head_block = densenetBlock.block('S', list_classes, input_x, input_y, fake_prediction, children_groups = children_groups)
         head_block.block_labels = np.zeros(NUM_CLASSES, dtype=np.int16)#Labels specific to the indexing of this block
         for i, group in enumerate(children_groups):
             head_block.block_labels[group] = i + 1
@@ -99,12 +108,12 @@ def define_head(list_classes, x, y, children_groups = None):
         head_block.fully_connected_size = FULLY_CONNECTED_SIZE
         setParameters.set_parameters(head_block, parent)
         densenetBlock.define_block_branch(head_block)
-    update_dict(head_block)
     trainers += [head_block.train_step]
-    perm_variables += [head_block.perm_variables]
-    temp_variables += [head_block.temp_variables]
-    statistics += [head_block.cross_entropy_summary , head_block.accuracy_summary_train]
-    return head_block
+    perm_variables += head_block.perm_variables
+    temp_variables += head_block.temp_variables
+    train_stats += [head_block.cross_entropy_summary , head_block.accuracy_summary_train]
+    test_stats += [head_block.accuracy_summary_test]
+    return head_block, test_bool
 
 def test_group(classifications, groups):
     wrong = 0
@@ -176,8 +185,9 @@ def generate_children(block_info):
     for index, group in enumerate(block_info.children_groups):
         block_info.block_labels[group] = index + 1
 
-    statistics.remove(block_info.cross_entropy_summary)
-    statistics.remove(block_info.accuracy_summary_train)
+    train_stats.remove(block_info.cross_entropy_summary)
+    train_stats.remove(block_info.accuracy_summary_train)
+    test_stats.remove(block_info.accuracy_summary_test)
     trainers.remove(block_info.train_step)
 
     densenetBlock.define_block_branch(m)
@@ -188,7 +198,8 @@ def generate_children(block_info):
     for var in block_info.temp_variables:
         if var in temp_variables:
             temp_variables.remove(var)
-    statistics += [block_info.cross_entropy_summary , block_info.accuracy_summary_train]
+    train_stats += [block_info.cross_entropy_summary , block_info.accuracy_summary_train]
+    test_stats += [block_info.accuracy_summary_test]
     trainers += [block_info.train_step]
 
     for index, group in enumerate(block_info.children_groups):
@@ -198,40 +209,31 @@ def generate_children(block_info):
         trainers += [block.train_step]
         perm_variables += [block.perm_variables]
         temp_variables += [block.temp_variables]
-        statistics += [block.cross_entropy_summary , block.accuracy_summary_train]
-
+        train_stats += [block.cross_entropy_summary , block.accuracy_summary_train]
+        test_stats += [block.accuracy_summary_test]
     return block_info
 
-def train_model(head_block ,num_iterations):
+def train_model(head_block ,num_iterations, test_bool):
     global time_step
     time_step = 0
     epoch = 0
-    input_images_summary = tf.summary.image("image_inputs", head_block.input ,max_outputs = NUM_OUTPUTS)
-    merged_summary = tf.summary.merge(statistics)
+    input_images_summary = tf.summary.image("image_inputs", head_block.x ,max_outputs = NUM_OUTPUTS)
+    merged_summary = tf.summary.merge(train_stats)
+    test_summary = tf.summary.merge(test_stats)
     for iteration in range(num_iterations):
         time_step += 1
-        # if time_step % 10 ==0:
-        #     # print(time_step
-
-        while x_batch is None:#when the generator is done, instantiate a new one
-            # train_gen = getData.get_batch_generator(batch_size, DATA_PATH+TRAINING_NAME)
-            train_gen = getData.return_mnist_train_generator(batch_size)
-            epoch += 1
-            print("Completed Epoch. Num Completed: ",epoch)
-            x_batch, y_labels = next(train_gen,(None, None))
+        if time_step % 1000 ==0:
+            sys.stdout.write(str(time_step) + ', ')
 
         # feed_dict = {m.input: input_x, m.y: one_hot_labels}
         outputs = [merged_summary] + [input_images_summary] + trainers
         outputs_tuple = sess.run(outputs)#train generator)
-        train_writer.add_summary(outputs_tuple[0])
-        train_writer.add_summary(outputs_tuple[1])
-        # if iteration % WHEN_TEST == 0:
-        #     x_batch_test, y_labels_test = next(test_gen,(None, None))
-        #     while x_batch_test is None:#when the generator is done, instantiate a new one
-        #         # test_gen = getData.get_batch_generator(batch_size, DATA_PATH+TESTING_NAME)
-        #         test_gen = getData.return_mnist_test_generator(batch_size)
-        #         x_batch_test, y_labels_test = next(test_gen,(None, None))
-        #     test_block(head_block, x_batch_test, y_labels_test)
+        train_writer.add_summary(outputs_tuple[0], time_step)
+        train_writer.add_summary(outputs_tuple[1], time_step)
+        if iteration % WHEN_TEST == 0:
+            outputs = test_summary
+            outputs_tuple = sess.run(outputs, feed_dict = {test_bool: True})#train generator)
+            train_writer.add_summary(outputs_tuple, time_step)
 
         if iteration % WHEN_SAVE ==0:
             saver_perm.save(sess, PERM_MODEL_FILEPATH)
@@ -272,27 +274,30 @@ if __name__ == "__main__":
     classes = np.arange(NUM_CLASSES) + 1
     ##############GET DATA###############
     train_mnist = getData.return_mnist_datatset_train().repeat().batch(BATCH_SIZE)
-    test_mnist = getData.return_mnist_dataset_test().batch(BATCH_SIZE)
+    test_mnist = getData.return_mnist_dataset_test().repeat().batch(BATCH_SIZE)
     train_iterator = train_mnist.make_initializable_iterator()
     test_iterator = test_mnist.make_initializable_iterator()
-    train_input, train_label = train_iterator.get_next()
-    test_input, test_label = test_iterator.get_next()
+    train_input = train_iterator.get_next()
+    test_input = test_iterator.get_next()
     sess.run([train_iterator.initializer, test_iterator.initializer])
 
     ############DEFINE#######
-    head_block = define_head(classes, train_input, train_label)
+    head_block, test_bool = define_head(classes, train_input, test_input)
     ###########SAVE###########
-    saver_perm = tf.train.Saver(perm_variables)
-    saver_temp = tf.train.Saver(temp_variables)
+    print(perm_variables)
+    print(temp_variables)
+
+    saver_perm = tf.train.Saver(var_list=perm_variables)
+    saver_temp = tf.train.Saver(var_list=temp_variables)
     sess.run(tf.global_variables_initializer())
-    if MODEL_FILEPATH is not None and RESTORE:
-        saver_perm.restore(sess, MODEL_FILEPATH)
-        saver_temp.restore(sess, MODEL_FILEPATH)
+    if PERM_MODEL_FILEPATH is not None and RESTORE:
+        saver_perm.restore(sess, PERM_MODEL_FILEPATH)
+        saver_temp.restore(sess, TEMP_MODEL_FILEPATH)
     else:
         print('SAVE')
-        saver_perm.save(sess, MODEL_FILEPATH)
-        saver_temp.save(sess, MODEL_FILEPATH)
+        saver_perm.save(sess, PERM_MODEL_FILEPATH)
+        saver_temp.save(sess, TEMP_MODEL_FILEPATH)
 
     train_writer = tf.summary.FileWriter(SUMMARY_FILEPATH,
                                   sess.graph)
-    train_model(head_block , ITERATIONS)
+    train_model(head_block , ITERATIONS, test_bool)
