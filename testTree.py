@@ -18,7 +18,7 @@ import cPickle
 import divide
 import getData
 
-NUM_CLASSES = 101
+NUM_CLASSES = 100
 INPUT_SHAPE = 28, 28, 1
 
 x = tf.placeholder(tf.float32, shape=(None, input_shape[0], input_shape[1], input_shape[2]))

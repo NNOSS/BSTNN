@@ -12,13 +12,14 @@ import tensorflow as tf
 from tensorlayer.layers import *
 
 class block:
-    def __init__(self, name, labels, x, y, predictions):
+    def __init__(self, name, labels, x, y, predictions, children_groups = []):
         #Initialized Immediately
         self.name = name
         self.labels = labels #TRUE PREDICTIONS STARTING AT 0
         self.x = x
         self.y = y
         self.predictions = predictions
+        self.children_groups = children_groups #TRUE PREDICTIONS STARTING AT 1
         #Should be Initialized before model initialization
 
         self.block_labels = None
@@ -27,14 +28,21 @@ class block:
         self.convolutions = None
         self.fully_connected_size = None
         #Initialized at model initialization
-        self.output = None
-        self.train_step = None
-        self.perm_variables = None
-        self.temp_variables = None
+
+        self.perm_variables = None #Needed
+        self.temp_variables = None #Needed
         self.y_ = None
         self.y_conv = None
+        self.convolutions = None
+        self.filtered_labels = None
+        self.filtered_labels_false = None
+        self.filtered_input = None
+        self.cross_entropy_summary = None #Needed
+        self.accuracy_summary_train = None #Needed
+        self.output = None
+        self.train_step = None #Needed
         #initializated when creating new models
-        self.children = [] #TRUE PREDICTIONS STARTING AT 1
+        self.children = []
 
 def define_block_body(x_image,block_info):
     '''Create a classifier from the given inputs'''
@@ -46,7 +54,7 @@ def define_block_body(x_image,block_info):
     conv_pointers = [inputs]#list of filters
     for i,v in enumerate(m.convolutions):
         curr_layer = BatchNormLayer(Conv2d(conv_pointers[-1],
-            m.convolutions[i], (5, 5),strides = (1,1), name=prefix +
+            m.convolutions[i], (5, 5),strides = (1,1), filtered_inputname=prefix +
             'conv1_%s'%(i)), act=tf.nn.leaky_relu,is_train=True ,name=prefix +
             'batch_norm%s'%(i))
         if i < len(m.convolutions)-1:
@@ -65,7 +73,13 @@ def define_block_leaf(block_info):
     prefix = m.name + '_'
     with tf.variable_scope(prefix + "block") as scope:
         block_labels = tf.constant(m.block_labels, name = prefix +'block_labels')
-        m.filtered_labels = tf.where(block_labels[m.predictions] != 0 or block_labels[m.y] != 0,
+        print(m.predictions.get_shape())
+        print(block_labels.get_shape())
+        keep_instances = tf.gather(block_labels, m.predictions)
+        print(keep_instances.get_shape())
+        keep_instances2 = tf.gather(block_labels, m.y)
+        keep_instances = block_labels[m.y] != 0
+        m.filtered_labels = tf.where(keep_instances,
         x = m.y, name = prefix + 'filtered_labels')
         m.filtered_labels_false = block_labels[m.y]
         one_hot_false = tf.zeros([m.filtered_labels.get_shape()[0], len(m.labels)+1], name=prefix +'One_Hot')
@@ -93,8 +107,7 @@ def define_block_leaf(block_info):
         print(m.output.get_shape())
         _, l, w, d = m.output.get_shape()
         m.output_shape = (l, w, d)
-
-        t_vars = tf.trainable_variables()s
+        t_vars = tf.trainable_variables()
         m_vars = [var for var in t_vars if prefix in var.name] #find trainable discriminator variable
         for var in b_vars:
             print(var.name)
@@ -110,14 +123,14 @@ def define_block_branch(block_info):
         m.filtered_labels = tf.where(block_labels[m.predictions] != 0 or block_labels[m.y] != 0,
         x = m.y, name = prefix + 'filtered_labels')
         filtered_labels_false = block_labels[m.y]
-        one_hot_false = tf.zeros([filtered_labels.get_shape()[0], len(m.children)+1], name=prefix +'One_Hot')
+        one_hot_false = tf.zeros([filtered_labels.get_shape()[0], len(m.children_groups)+1], name=prefix +'One_Hot')
         one_hot_false[filtered_labels_false] = 1
         m.filtered_input = tf.where(block_labels[m.predictions] != 0 or block_labels[m.y] != 0,
         x = m.x, name = prefix + 'filtered_input')
         tl_input = InputLayer(filtered_input, name= prefix +'tl_inputs')
         lastLayer = define_block_body(tl_input, m)
         flat = FlattenLayer(conv_pointers[-1], name = prefix + 'flatten')
-        m.y_conv = DenseLayer(flat, len(m.children)+1, name = prefix + 'output').outputs
+        m.y_conv = DenseLayer(flat, len(m.children_groups)+1, name = prefix + 'output').outputs
 
         t_vars = tf.trainable_variables()
         print(t_vars)
@@ -135,7 +148,7 @@ def define_block_branch(block_info):
         _, l, w, d = m.output.get_shape()
         m.output_shape = (l, w, d)
 
-        t_vars = tf.trainable_variables()s
+        t_vars = tf.trainable_variables()
         m_vars = [var for var in t_vars if prefix in var.name] #find trainable discriminator variable
         for var in b_vars:
             print(var.name)
