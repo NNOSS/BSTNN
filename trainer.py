@@ -37,7 +37,7 @@ BETA1 = .9
 CONVOLUTIONS = [32, 64]
 FULLY_CONNECTED_SIZE = 4096
 
-RESTORE = False
+RESTORE = True
 
 trainers = []
 perm_variables = []
@@ -120,7 +120,7 @@ def test_group(classifications, groups):
     tot = 0
     #This is horribly inefficient
     for group in groups:
-        print(class_names[group])
+        # print(class_names[group])
         for class_label in group:
             for i in range(NUM_CLASSES-1):
                 tot += classifications[class_label, i]
@@ -128,7 +128,7 @@ def test_group(classifications, groups):
                     wrong += classifications[class_label, i]
     print(wrong/tot)
 
-def get_confusion_matrix(block_info, batch_size):
+def get_confusion_matrix(block_info, test_bool):
     '''Generates a confusion matrix from the data'''
     m = block_info
     falsePercents = np.zeros((len(m.labels) + 1, len(m.labels) + 1))
@@ -136,50 +136,53 @@ def get_confusion_matrix(block_info, batch_size):
     totals = np.zeros((len(m.labels) + 1, len(m.labels) + 1))
     increment = np.ones(len(m.labels) + 1)
     # test_gen = getData.get_batch_generator(batch_size, DATA_PATH+TESTING_NAME)
-    test_gen = getData.return_mnist_test_generator(batch_size)
-
-    x_batch_test, y_labels_test = next(test_gen,(None, None))
-    while x_batch_test is not None:#when the generator is done, instantiate a new one
-
-        feed_dict = {x: x_batch_test, y: y_labels_test}
-        y_conv, filtered_labels_false = sess.run([m.y_conv, m.filtered_labels_false], feed_dict=feed_dict)#train generator)
-        y_conv = np.squeeze(y_conv)
-        y_exp = np.exp(y_conv)
-        y_tot = np.sum(y_exp, axis = 1)
-        y_conv_softmax = y_exp / y_tot[:, np.newaxis]
-        it = np.nditer(filtered_labels_false, flags=['f_index'],op_flags=['readwrite'])
-        predicted_labels = np.argmax(y_exp, axis = 1)
-        # print(y_conv)
-        # print(np.sum(y_conv, axis = 1))
-        while not it.finished:
-            totals[it[0]] += increment
-            falsePercents[it[0]] += y_conv_softmax[it.index]
-            classifications[it[0], predicted_labels[it.index] ] += 1
-            it.iternext()
-        x_batch_test, y_labels_test = next(test_gen,(None, None))
+    while True:#when the generator is done, instantiate a new one
+        try:
+            y_conv, filtered_labels_false = sess.run([m.y_conv, m.filtered_labels_false], feed_dict={test_bool: True})#train generator)
+            y_conv = np.squeeze(y_conv)
+            y_exp = np.exp(y_conv)
+            y_tot = np.sum(y_exp, axis = 1)
+            y_conv_softmax = y_exp / y_tot[:, np.newaxis]
+            it = np.nditer(filtered_labels_false, flags=['f_index'],op_flags=['readwrite'])
+            predicted_labels = np.argmax(y_exp, axis = 1)
+            print(filtered_labels_false)
+            # print(y_conv)
+            # print(np.sum(y_conv, axis = 1))
+            while not it.finished:
+                totals[it[0]] += increment
+                falsePercents[it[0]] += y_conv_softmax[it.index]
+                classifications[it[0], predicted_labels[it.index] ] += 1
+                it.iternext()
+        except tf.errors.OutOfRangeError:
+            break
     matrix = falsePercents/totals
     divide.symm_matrix(matrix)
     matrix = matrix[1:,1:]
     classifications = classifications[1:,1:]
     return matrix, classifications
 
-def generate_children(block_info):
-    '''This function takes a block and computes its accuracy, making groups that
-    have very little inter-group error'''
-    matrix, classifications = get_confusion_matrix(block_info)
+def get_promising_group(matrix, classifications):
     y_tot = np.sum(classifications, axis = 1)
     classifications_norm = classifications / y_tot[:, np.newaxis]
     divide.symm_matrix(classifications_norm)
-    groups_dict = divide.find_thresholds(classifications_norm)
-    least_groups = len(block_info.labels) + 2
+    groups_dict = divide.find_thresholds(matrix)
+    tot_values = len(matrix[0])
+    least_groups = len(matrix[0]) + 2
     for key in groups_dict.keys():
         max_group = 0
         for group in groups_dict[key]:
             if max_group < len(group):
                 max_group = len(group)
-        if max_group < (len(block_info.labels)/2)  and key < least_groups:
+        if max_group < (tot_values/2)  and key < least_groups:
             least_groups = key
-    block_info.children_groups = groups_dict[least_groups]
+    return groups_dict[least_groups]
+
+def generate_children(block_info):
+    '''This function takes a block and computes its accuracy, making groups that
+    have very little inter-group error'''
+    matrix, classifications = get_confusion_matrix(block_info)
+    best_group = get_promising_group(matrix, classifications)
+    block_info.children_groups = best_group
     test_group(classifications, block_info.children_groups)
     block_info.block_labels = np.zeros(NUM_CLASSES, dtype=np.int16)#Labels specific to the indexing of this block
     for index, group in enumerate(block_info.children_groups):
@@ -239,26 +242,6 @@ def train_model(head_block ,num_iterations, test_bool):
             saver_perm.save(sess, PERM_MODEL_FILEPATH)
             saver_temp.save(sess, TEMP_MODEL_FILEPATH)
 
-def test_block(block_info, input_x, labels):
-    '''Train an individual block. First we must reconfigure the labels to put them
-    in the appropriate indeces for the model, then we train it. Then repeat the
-    process with its children.'''
-    m = block_info
-    block_labels_curr = block_info.block_labels[labels]
-    indexes = np.arange(len(block_labels_curr))
-    one_hot_labels = np.zeros((len(block_labels_curr),len(block_info.labels)))
-    one_hot_labels[indexes, block_labels_curr] = 1
-    feed_dict = {m.input: input_x, m.y: one_hot_labels}
-    output, y_conv, accuracy_summary = sess.run([
-     m.output, m.y_conv, m.accuracy_summary_test],
-    feed_dict=feed_dict)#train generator)
-    train_writer.add_summary(accuracy_summary, time_step)
-    for child in block_info.children:
-        if len(child.labels) > 1:
-            next_input_x = np.where(np.isin(labels, child.labels) | np.isin(y_conv, child.labels),output)
-            next_labels = np.where(np.isin(labels, child.labels) | np.isin(y_conv, child.labels),labels)
-            test_block(child, next_input_x, next_labels)
-
 def restore_models():
     pass
 
@@ -274,7 +257,7 @@ if __name__ == "__main__":
     classes = np.arange(NUM_CLASSES) + 1
     ##############GET DATA###############
     train_mnist = getData.return_mnist_datatset_train().repeat().batch(BATCH_SIZE)
-    test_mnist = getData.return_mnist_dataset_test().repeat().batch(BATCH_SIZE)
+    test_mnist = getData.return_mnist_dataset_test().batch(BATCH_SIZE)
     train_iterator = train_mnist.make_initializable_iterator()
     test_iterator = test_mnist.make_initializable_iterator()
     train_input = train_iterator.get_next()
@@ -300,4 +283,11 @@ if __name__ == "__main__":
 
     train_writer = tf.summary.FileWriter(SUMMARY_FILEPATH,
                                   sess.graph)
-    train_model(head_block , ITERATIONS, test_bool)
+    # print(head_block.block_labels)
+    #
+    matrix, classifications = get_confusion_matrix(head_block, test_bool)
+    best_group = get_promising_group(matrix, classifications)
+    print(best_group)
+    test_group(classifications, best_group)
+    print(classifications)
+    # train_model(head_block , ITERATIONS, test_bool)

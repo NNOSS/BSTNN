@@ -12,7 +12,7 @@ def decode_image(image):
     return image / 255.0
 
 def decode_label(label):
-    label = tf.decode_raw(label, tf.uint8)  # tf.string -> [tf.uint8]
+    label = tf.decode_raw(label, tf.uint8) + 1  # tf.string -> [tf.uint8]
     label = tf.reshape(label, [])  # label is a scalar
     return tf.to_int32(label)
 
