@@ -47,6 +47,9 @@ test_stats = []
 
 PERM_MODEL_FILEPATH = '/home/gtower/Models/MNIST/perm_model.ckpt' #filepaths to model and summaries
 TEMP_MODEL_FILEPATH = '/home/gtower/Models/MNIST/temp_model.ckpt' #filepaths to model and summaries
+PERM_MODEL_FILEPATH2 = '/home/gtower/Models/MNIST/perm2_model.ckpt' #filepaths to model and summaries
+TEMP_MODEL_FILEPATH2 = '/home/gtower/Models/MNIST/temp2_model.ckpt'
+PICKLE_FILEPATH = '/home/gtower/Models/MNIST/head.p'
 SUMMARY_FILEPATH = '/home/gtower/Models/MNIST/Summaries/'
 def update_dict(block_info):
     '''Update the global dictionary mapping labels to their path.'''
@@ -57,13 +60,11 @@ def new_leaf_block(parent, index, list_classes):
     '''The block is the container for an individual network. This function creates
     a new block that predicts from a list of given classes'''
     m = densenetBlock.block(parent.name + index, list_classes, parent.filtered_input,
-     parent.filtered_labels, parent.y_conv)
-    m.block_labels = np.zeros(m.labels+1, dtype=np.int16)#Labels specific to the indexing of this block
+     parent.filtered_labels, parent.arbitrary_prediction)
+    m.block_labels = np.zeros(NUM_CLASSES+1, dtype=np.int16)#Labels specific to the indexing of this block
     m.block_labels[m.labels] = np.arange(len(m.labels)) + 1
-    if len(m.labels) > 1:#If there is more than one class.
-        setParameters.set_parameters(m, parent)
-        densenetBlock.define_block_leaf(m)
-    update_dict(m)
+    setParameters.set_parameters(m, parent)
+    densenetBlock.define_block_leaf(m)
     return m
 
 def new_branch_block(parent, index, list_classes, children_groups):
@@ -76,7 +77,6 @@ def new_branch_block(parent, index, list_classes, children_groups):
         m.block_labels[group] = i + 1
     setParameters.set_parameters(m, parent)
     densenetBlock.define_block_branch(m)
-    update_dict(m)
     return m
 
 def define_head(list_classes, next_train, next_test ,children_groups = None):
@@ -122,13 +122,13 @@ def test_group(classifications, groups):
     for group in groups:
         # print(class_names[group])
         for class_label in group:
-            for i in range(NUM_CLASSES-1):
+            for i in range(len(classifications[0])):
                 tot += classifications[class_label, i]
                 if i not in group:
                     wrong += classifications[class_label, i]
     print(wrong/tot)
 
-def get_confusion_matrix(block_info, test_bool):
+def get_confusion_matrix(block_info):
     '''Generates a confusion matrix from the data'''
     m = block_info
     falsePercents = np.zeros((len(m.labels) + 1, len(m.labels) + 1))
@@ -145,7 +145,6 @@ def get_confusion_matrix(block_info, test_bool):
             y_conv_softmax = y_exp / y_tot[:, np.newaxis]
             it = np.nditer(filtered_labels_false, flags=['f_index'],op_flags=['readwrite'])
             predicted_labels = np.argmax(y_exp, axis = 1)
-            print(filtered_labels_false)
             # print(y_conv)
             # print(np.sum(y_conv, axis = 1))
             while not it.finished:
@@ -180,20 +179,27 @@ def get_promising_group(matrix, classifications):
 def generate_children(block_info):
     '''This function takes a block and computes its accuracy, making groups that
     have very little inter-group error'''
+    global trainers
+    global perm_variables
+    global temp_variables
+    global train_stats
+    global test_stats
     matrix, classifications = get_confusion_matrix(block_info)
     best_group = get_promising_group(matrix, classifications)
-    block_info.children_groups = best_group
-    test_group(classifications, block_info.children_groups)
-    block_info.block_labels = np.zeros(NUM_CLASSES, dtype=np.int16)#Labels specific to the indexing of this block
+    test_group(classifications, best_group)
+    block_info.children_groups = [block_info.labels[group] for group in best_group]
+    block_info.block_labels = np.zeros(NUM_CLASSES+1, dtype=np.int16)#Labels specific to the indexing of this block
     for index, group in enumerate(block_info.children_groups):
         block_info.block_labels[group] = index + 1
+    print(block_info.children_groups)
+    print(block_info.block_labels)
 
     train_stats.remove(block_info.cross_entropy_summary)
     train_stats.remove(block_info.accuracy_summary_train)
     test_stats.remove(block_info.accuracy_summary_test)
     trainers.remove(block_info.train_step)
 
-    densenetBlock.define_block_branch(m)
+    densenetBlock.define_block_branch(block_info, reuse = tf.AUTO_REUSE)
     for var in block_info.perm_variables:
         if var not in perm_variables:
             perm_variables += [var]
@@ -201,19 +207,34 @@ def generate_children(block_info):
     for var in block_info.temp_variables:
         if var in temp_variables:
             temp_variables.remove(var)
+
+    print 'train_stats ', train_stats
+    print 'test_stats ',test_stats
+    print 'trainers ' ,trainers
+    print 'perm_variables ' ,perm_variables
+    print 'temp_variables ' ,temp_variables
+
     train_stats += [block_info.cross_entropy_summary , block_info.accuracy_summary_train]
     test_stats += [block_info.accuracy_summary_test]
     trainers += [block_info.train_step]
 
     for index, group in enumerate(block_info.children_groups):
-        group = block_info.labels[group]
-        block = new_leaf_block(block_info, str(index + 1), group)
-        block_info.children.append(block)
-        trainers += [block.train_step]
-        perm_variables += [block.perm_variables]
-        temp_variables += [block.temp_variables]
-        train_stats += [block.cross_entropy_summary , block.accuracy_summary_train]
-        test_stats += [block.accuracy_summary_test]
+        if len(group) > 1:
+            block = new_leaf_block(block_info, str(index + 1), group)
+            block_info.children.append(block)
+            trainers += [block.train_step]
+            perm_variables += block.perm_variables
+            temp_variables += block.temp_variables
+            train_stats += [block.cross_entropy_summary , block.accuracy_summary_train]
+            test_stats += [block.accuracy_summary_test]
+        else:
+            block_info.children.append(None)
+
+    print 'train_stats ', train_stats
+    print 'test_stats ',test_stats
+    print 'trainers ' ,trainers
+    print 'perm_variables ' ,perm_variables
+    print 'temp_variables ' ,temp_variables
     return block_info
 
 def train_model(head_block ,num_iterations, test_bool):
@@ -285,9 +306,19 @@ if __name__ == "__main__":
                                   sess.graph)
     # print(head_block.block_labels)
     #
-    matrix, classifications = get_confusion_matrix(head_block, test_bool)
-    best_group = get_promising_group(matrix, classifications)
-    print(best_group)
-    test_group(classifications, best_group)
-    print(classifications)
+    generate_children(head_block)
+    # sess.run(tf.global_variables_initializer())
+    # saver_perm.restore(sess, PERM_MODEL_FILEPATH)
+    # saver_temp.restore(sess, TEMP_MODEL_FILEPATH)
+    # saver_perm = tf.train.Saver(var_list=perm_variables)
+    # saver_temp = tf.train.Saver(var_list=temp_variables)
+    # saver_perm.save(sess, PERM_MODEL_FILEPATH2)
+    # saver_temp.save(sess, TEMP_MODEL_FILEPATH2)
+    densenetBlock.clean_block_recursive(head_block)
+    cPickle.dump(head_block, open( PICKLE_FILEPATH, "wb" ))
+    # matrix, classifications = get_confusion_matrix(head_block, test_bool)
+    # best_group = get_promising_group(matrix, classifications)
+    # print(best_group)
+    # test_group(classifications, best_group)
+    # print(classifications)
     # train_model(head_block , ITERATIONS, test_bool)

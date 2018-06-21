@@ -10,7 +10,7 @@ def set_parameters(block_info, block_info_parent):
     set_beta1(block_info, block_info_parent)
     set_convolutions(block_info, block_info_parent)
     set_fully_connected_size(block_info, block_info_parent)
-    block.input_shape = block_info.output_shape
+    # block.input_shape = block_info.output_shape
 
 def set_learning_rate(block_info, block_info_parent):
     block_info.learning_rate = block_info_parent.learning_rate

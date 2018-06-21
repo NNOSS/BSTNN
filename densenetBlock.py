@@ -10,6 +10,7 @@ import os
 # os.environ["CUDA_VISIBLE_DEVICES"]="0"
 import tensorflow as tf
 from tensorlayer.layers import *
+import numpy as np
 
 class block:
     def __init__(self, name, labels, x, y, predictions, children_groups = []):
@@ -43,6 +44,28 @@ class block:
         self.train_step = None #Needed
         #initializated when creating new models
         self.children = []
+
+def clean_block_recursive(block_info):
+    block_info.x = None
+    block_info.y = None
+    block_info.predictions = None
+    block_info.perm_variables = None #Needed
+    block_info.temp_variables = None #Needed
+    block_info.y_ = None
+    block_info.y_conv = None
+    block_info.filtered_labels = None
+    block_info.filtered_labels_false = None
+    block_info.filtered_input = None
+    block_info.cross_entropy_summary = None #Needed
+    block_info.accuracy_summary_train = None #Needed
+    block_info.accuracy_summary_test = None #Needed
+    block_info.output = None
+    block_info.train_step = None #Needed
+    block_info.arbitrary_prediction = None
+    for child in block_info.children:
+        if child is not None:
+            clean_block_recursive(child)
+
 
 def define_block_body(x_image,block_info):
     '''Create a classifier from the given inputs'''
@@ -95,6 +118,7 @@ def define_block_leaf(block_info):
         m.perm_variables = m_vars_names
         dense_layer = DenseLayer(flat, len(m.labels)+1, name = prefix + 'output')
         m.y_conv = dense_layer.outputs
+
         t_vars = tf.trainable_variables()
         m_vars = [var for var in t_vars if prefix + 'output' in var.name] #find trainable discriminator variable
         for var in m_vars:
@@ -109,21 +133,19 @@ def define_block_leaf(block_info):
 
         m.output = MaxPool2d(lastLayer, filter_size = (2,2)).outputs
         print(m.output.get_shape())
-        _, l, w, d = m.output.get_shape()
-        m.output_shape = (l, w, d)
+
         t_vars = tf.trainable_variables()
         m_vars = [var for var in t_vars if prefix in var.name] #find trainable discriminator variable
         for var in m_vars:
             print(var.name)
-        m.train_step = tf.train.AdamOptimizer(m.learning_rate, beta1=m.beta1).minimize(cross_entropy, var_list=m_vars)
+        m.train_step = tf.train.AdamOptimizer(m.learning_rate, beta1=m.beta1).minimize(cross_entropy)
 
-def define_block_branch(block_info):
+def define_block_branch(block_info, reuse = None):
     '''Handle the final fully connected layer of the block as well as the necessary
     variables to return'''
     m = block_info
     prefix = m.name + '_'
-    with tf.variable_scope(prefix + "block") as scope:
-
+    with tf.variable_scope(prefix + "block", reuse = reuse) as scope:
         block_labels = tf.constant(m.block_labels, name = prefix +'block_labels', dtype = tf.int32)
         print(m.predictions.get_shape())
         print(block_labels.get_shape())
@@ -137,14 +159,22 @@ def define_block_branch(block_info):
         one_hot_false = tf.one_hot(m.filtered_labels_false, len(m.children_groups) + 1, name=prefix +'One_Hot')
         m.filtered_input = tf.boolean_mask(m.x, mask,name = prefix + 'filtered_input')
 
-        tl_input = InputLayer(filtered_input, name= prefix +'tl_inputs')
+        tl_input = InputLayer(m.filtered_input, name= prefix +'tl_inputs')
         lastLayer = define_block_body(tl_input, m)
-        flat = FlattenLayer(conv_pointers[-1], name = prefix + 'flatten')
-        m.y_conv = DenseLayer(flat, len(m.children_groups)+1, name = prefix + 'output').outputs
+        flat = FlattenLayer(lastLayer, name = prefix + 'flatten')
+        m.y_conv = DenseLayer(flat, len(m.children_groups)+1, name = prefix + 'branch_output').outputs
+        class_choice = tf.argmax(m.y_conv, 1)
+        array = np.arange(len(m.children_groups)+1)
+        for i in range(1, len(m.children_groups)+1):
+            index = np.argmax(np.equal(i, m.block_labels), axis = 0)
+            print(index)
+            array[i] = index
+        reverse = tf.constant(array, name=prefix + 'reverse_conversion',dtype = tf.int32)
+        m.arbitrary_prediction = tf.gather(reverse, class_choice)
 
         t_vars = tf.trainable_variables()
         print(t_vars)
-        m_vars_names = [var for var in t_vars if prefix in var.name]
+        m_vars_names = [var for var in t_vars if prefix in var.name and prefix + 'output' not in var.name]
         print(m_vars_names)
         m.perm_variables = m_vars_names
 
@@ -156,11 +186,4 @@ def define_block_branch(block_info):
 
         m.output = MaxPool2d(lastLayer, filter_size = (2,2)).outputs
         print(m.output.get_shape())
-        _, l, w, d = m.output.get_shape()
-        m.output_shape = (l, w, d)
-
-        t_vars = tf.trainable_variables()
-        m_vars = [var for var in t_vars if prefix in var.name] #find trainable discriminator variable
-        for var in b_vars:
-            print(var.name)
-        m.train_step = tf.train.AdamOptimizer(m.learning_rate, beta1=m.beta1).minimize(cross_entropy, var_list=m_vars)
+        m.train_step = tf.train.AdamOptimizer(m.learning_rate, beta1=m.beta1).minimize(cross_entropy)
