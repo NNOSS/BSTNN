@@ -22,10 +22,10 @@ def find_thresholds(confusion_matrix, step = .001):
     i = 0
     while i < max_value:
         groups = return_groups(confusion_matrix, i)
-        if len(groups) == len(confusion_matrix):
-            break
         if len(groups) not in num_groups:
             num_groups[len(groups)] = groups
+        if len(groups) == len(confusion_matrix):
+            break
         i += step
     return num_groups
 

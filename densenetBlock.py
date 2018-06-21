@@ -59,6 +59,7 @@ def clean_block_recursive(block_info):
     block_info.cross_entropy_summary = None #Needed
     block_info.accuracy_summary_train = None #Needed
     block_info.accuracy_summary_test = None #Needed
+    block_info.num_right = None
     block_info.output = None
     block_info.train_step = None #Needed
     block_info.arbitrary_prediction = None
@@ -89,22 +90,21 @@ def define_block_body(x_image,block_info):
     return conv_pointers[-1]
 
 
-def define_block_leaf(block_info):
+def define_block_leaf(block_info, test_bool):
     '''Handle the final fully connected layer of the block as well as the necessary
     variables to return'''
     m = block_info
     prefix = m.name + '_'
     with tf.variable_scope(prefix + "block") as scope:
-        block_labels = tf.constant(m.block_labels, name = prefix +'block_labels', dtype = tf.int32)
-        print(m.predictions.get_shape())
-        print(block_labels.get_shape())
+        block_labels = tf.constant(m.block_labels, name = prefix +'block_labels', dtype = tf.int64)
         keep_instances_p = tf.gather(block_labels, m.predictions)
-        print(keep_instances_p.get_shape())
-        keep_instances_l = tf.gather(block_labels, m.y)
+
+        keep_instances_l =  tf.cond(test_bool, lambda: keep_instances_p, lambda: tf.gather(block_labels, m.y), name = prefix + 'test_input')
+
+
         mask = tf.greater(keep_instances_p + keep_instances_l, tf.zeros_like(keep_instances_p))
-        print(mask.get_shape())
         m.filtered_labels = tf.boolean_mask(m.y, mask, name = prefix + 'filtered_labels')
-        m.filtered_labels_false = tf.boolean_mask(keep_instances_l, mask, name = prefix + 'filtered_labels_false')
+        m.filtered_labels_false = tf.boolean_mask(tf.gather(block_labels, m.y), mask, name = prefix + 'filtered_labels_false')
         one_hot_false = tf.one_hot(m.filtered_labels_false, len(m.labels) + 1, name=prefix +'One_Hot')
         m.filtered_input = tf.boolean_mask(m.x, mask,name = prefix + 'filtered_input')
 
@@ -112,17 +112,15 @@ def define_block_leaf(block_info):
         lastLayer = define_block_body(tl_input, m)
         flat = FlattenLayer(lastLayer, name = prefix + 'flatten')
         t_vars = tf.trainable_variables()
-        print(t_vars)
+        # print(t_vars)
         m_vars_names = [var for var in t_vars if prefix in var.name]
-        print(m_vars_names)
+        # print(m_vars_names)
         m.perm_variables = m_vars_names
         dense_layer = DenseLayer(flat, len(m.labels)+1, name = prefix + 'output')
         m.y_conv = dense_layer.outputs
 
         t_vars = tf.trainable_variables()
         m_vars = [var for var in t_vars if prefix + 'output' in var.name] #find trainable discriminator variable
-        for var in m_vars:
-            print(var.name)
         m.temp_variables = m_vars
 
         cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels = one_hot_false, logits = m.y_conv))# reduce mean for discriminator
@@ -131,31 +129,30 @@ def define_block_leaf(block_info):
         m.accuracy_summary_train = tf.summary.scalar(prefix + 'accuracy_train_leaf', accuracy)
         m.accuracy_summary_test = tf.summary.scalar(prefix + 'accuracy_test_leaf', accuracy)
 
+        mask = tf.gather(m.terminal_points, m.filtered_labels_false)
+        teminal_labels = tf.boolean_mask(m.filtered_labels_false, mask)
+        teminal_predictions = tf.boolean_mask(tf.argmax(m.y_conv,1), mask)
+        m.num_right = tf.cast(tf.equal(teminal_labels, teminal_predictions), tf.float32)
+
         m.output = MaxPool2d(lastLayer, filter_size = (2,2)).outputs
-        print(m.output.get_shape())
 
         t_vars = tf.trainable_variables()
-        m_vars = [var for var in t_vars if prefix in var.name] #find trainable discriminator variable
-        for var in m_vars:
-            print(var.name)
+        m_vars = [var for var in t_vars if prefix in var.name] #find trainable discriminator variabl
         m.train_step = tf.train.AdamOptimizer(m.learning_rate, beta1=m.beta1).minimize(cross_entropy)
 
-def define_block_branch(block_info, reuse = None):
+def define_block_branch(block_info, test_bool,reuse = None):
     '''Handle the final fully connected layer of the block as well as the necessary
     variables to return'''
     m = block_info
     prefix = m.name + '_'
     with tf.variable_scope(prefix + "block", reuse = reuse) as scope:
-        block_labels = tf.constant(m.block_labels, name = prefix +'block_labels', dtype = tf.int32)
-        print(m.predictions.get_shape())
-        print(block_labels.get_shape())
+        block_labels = tf.constant(m.block_labels, name = prefix +'block_labels', dtype = tf.int64)
         keep_instances_p = tf.gather(block_labels, m.predictions)
-        print(keep_instances_p.get_shape())
-        keep_instances_l = tf.gather(block_labels, m.y)
+        keep_instances_l =  tf.cond(test_bool, lambda: keep_instances_p, lambda: tf.gather(block_labels, m.y), name = prefix + 'test_input')
+
         mask = tf.greater(keep_instances_p + keep_instances_l, tf.zeros_like(keep_instances_p))
-        print(mask.get_shape())
         m.filtered_labels = tf.boolean_mask(m.y, mask, name = prefix + 'filtered_labels')
-        m.filtered_labels_false = tf.boolean_mask(keep_instances_l, mask, name = prefix + 'filtered_labels_false')
+        m.filtered_labels_false = tf.boolean_mask(tf.gather(block_labels, m.y), mask, name = prefix + 'filtered_labels_false')
         one_hot_false = tf.one_hot(m.filtered_labels_false, len(m.children_groups) + 1, name=prefix +'One_Hot')
         m.filtered_input = tf.boolean_mask(m.x, mask,name = prefix + 'filtered_input')
 
@@ -167,23 +164,27 @@ def define_block_branch(block_info, reuse = None):
         array = np.arange(len(m.children_groups)+1)
         for i in range(1, len(m.children_groups)+1):
             index = np.argmax(np.equal(i, m.block_labels), axis = 0)
-            print(index)
             array[i] = index
         reverse = tf.constant(array, name=prefix + 'reverse_conversion',dtype = tf.int32)
         m.arbitrary_prediction = tf.gather(reverse, class_choice)
 
         t_vars = tf.trainable_variables()
-        print(t_vars)
+        # print(t_vars)
         m_vars_names = [var for var in t_vars if prefix in var.name and prefix + 'output' not in var.name]
-        print(m_vars_names)
+        # print(m_vars_names)
         m.perm_variables = m_vars_names
-
+        m.temp_variables = []
         cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels = one_hot_false, logits = m.y_conv))# reduce mean for discriminator
         m.cross_entropy_summary = tf.summary.scalar(prefix + 'loss_branch', cross_entropy)
         accuracy = tf.reduce_mean(tf.cast(tf.equal(tf.argmax(m.y_conv,1), tf.argmax(one_hot_false,1)), tf.float32))
         m.accuracy_summary_train = tf.summary.scalar(prefix + 'accuracy_train_branch', accuracy)
         m.accuracy_summary_test = tf.summary.scalar(prefix + 'accuracy_test_branch', accuracy)
+        mask = tf.gather(m.terminal_points, m.filtered_labels_false)
+        teminal_labels = tf.boolean_mask(m.filtered_labels_false, mask)
+        teminal_predictions = tf.boolean_mask(class_choice, mask)
+        m.num_right = tf.cast(tf.equal(teminal_labels, teminal_predictions), tf.float32)
+
 
         m.output = MaxPool2d(lastLayer, filter_size = (2,2)).outputs
-        print(m.output.get_shape())
+        # print(m.output.get_shape())
         m.train_step = tf.train.AdamOptimizer(m.learning_rate, beta1=m.beta1).minimize(cross_entropy)
